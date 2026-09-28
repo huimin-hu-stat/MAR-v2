@@ -10,23 +10,19 @@ class DataGenerator:
 
     def __init__(
         self,
-        #d: int = 3,
-        #N: int = 2000,
         distr: str = "Normal",
-        mu: torch.tensor = None,
-        sigma: torch.tensor = None,
-        pi: torch.tensor = None,
-        alpha: float = 0.7,
-        delta: float = 0.01,
+        mu: torch.tensor = None, # for gaussian mixture
+        sigma: torch.tensor = None, # for gaussian mixture
+        pi: torch.tensor = None, # for gaussian mixture
+        alpha: float = 0.7, # copula
+        delta: float = 0.01, # positivity
         df: Optional[int] = None,
         device: str = "cpu",
         dtype=torch.float64,
     ):
-        #self.d = d
-        #self.N = N
         self.distr = distr
         self.alpha = alpha
-        self.delta = torch.tensor(delta, device=device)
+        self.delta = delta
         self.df = df
         self.device = device
         self.dtype = dtype
@@ -95,20 +91,42 @@ class DataGenerator:
     # --------------------------------------------------
     # Gaussian copula
     # --------------------------------------------------
-    def sample_gaussian_copula(self, n, d):
+    def _ar1_cov(
+        self, 
+        d: int
+    ):
+        """
+            Generate AR(1) like covariance.
+                off-diagonal (except for the last row and column): Sigma_ij = alpha^|i - j|
+                NOTE: the last variable is independent from others
+        """
+        idx = torch.arange(d, device=self.device)
+        cov = self.alpha ** (idx[:, None] - idx[None, :]).abs().to(self.dtype)
+
+        # Independent last variable
+        cov[-1, :] = 0
+        cov[:, -1] = 0
+        cov[-1, -1] = 1
+        return cov
+    
+    def sample_gaussian_copula(
+        self, 
+        n: int, 
+        d: int
+    ):
         """
         Sample from a Gaussian copula.
 
         Args:
             n: number of samples
-            R: (d,d) correlation matrix
+            d: dimension
 
         Returns:
-            U: (n,d) samples with Uniform(0,1) margins
+            U: (n,d) samples with Uniform(0,1) margins that are correlated via the gaussian copula
         """
         R = self._ar1_cov(d)
 
-        # Cholesky factor
+        # Cholesky factor such that R = LL^T with L lower-triangular
         L = torch.linalg.cholesky(R)
 
         # Independent standard normals
@@ -128,8 +146,11 @@ class DataGenerator:
     # --------------------------------------------------
     def inverse_cdf(
         self,
-        U
+        U: torch.tensor
     ):
+        """
+        Uniforms -> data of targeted marginals
+        """
         if self.distr == "UNI":
             return U
 
@@ -154,24 +175,17 @@ class DataGenerator:
             raise NotImplementedError
 
 
-    def _ar1_cov(self, d):
-        idx = torch.arange(d, device=self.device)
-        cov = self.alpha ** (idx[:, None] - idx[None, :]).abs().to(self.dtype)
-
-        # Independent last variable
-        cov[-1, :] = 0
-        cov[:, -1] = 0
-        cov[-1, -1] = 1
-        return cov
-
     # --------------------------------------------------
     # Gaussian special case
     # --------------------------------------------------
     def sample_gaussian(
         self,
-        n,
-        d
+        n: int,
+        d: int
     ):
+        """
+        Sample multivariate Gaussian with AR(1) like covariance
+        """
         mean = torch.zeros(
             d,
             device=self.device,
@@ -186,8 +200,11 @@ class DataGenerator:
     
     def sample_gmm(
         self,
-        n
+        n: int
     ):
+        """
+        Sample Gaussian mixture
+        """
         _, d = self.mu.shape
 
         # normalize weights
@@ -229,7 +246,13 @@ class DataGenerator:
     # --------------------------------------------------
     # Latent uniforms
     # --------------------------------------------------
-    def latent_uniforms(self, X):
+    def latent_uniforms(
+        self, 
+        X: torch.tensor
+    ):
+        """
+        X -> marginal cdfs. Used for 3D case to induce missingness.
+        """
         X12 = X[:,:2]
         if self.distr == "UNI":
             return X12[:,0], X12[:,1]
@@ -267,16 +290,27 @@ class DataGenerator:
         raise NotImplementedError
 
     # --------------------------------------------------
-    # Missingness
+    # 3D examples
     # --------------------------------------------------
-    def sample_missingness(
+    # MAR
+    def generate_MAR(
         self,
-        X
+        X: torch.tensor
     ):
-        U1,U2 = self.latent_uniforms(X)
+        """
+        Generate MAR:
+        P((0,0,0)|x) = 1 - P((0,1,0)|x) - P((1,0,0)|x)
+        P((0,1,0)|x) = (2 - max(P(x1), c))/3
+        P((1,0,0)|x) = (1 - max(P(x2), c))/3
 
-        G1 = torch.maximum(U1, 2*self.delta)
-        G2 = torch.maximum(U2, 2*self.delta)
+        Returns:
+            M: MAR missingness mask with shape X.shape
+        """
+        U1, U2 = self.latent_uniforms(X) # X -> marginal cdfs
+
+        c = torch.tensor(self.delta, device=U1.device, dtype=U1.dtype)
+        G1 = torch.maximum(U1, c)
+        G2 = torch.maximum(U2, c)
 
         probs = torch.stack(
             [
@@ -289,7 +323,7 @@ class DataGenerator:
 
         choice = Categorical(probs).sample()
 
-        n,d = X.shape
+        _,d = X.shape
 
         masks = torch.stack(
             [
@@ -312,11 +346,21 @@ class DataGenerator:
 
         return masks[choice]
 
-    def sample_eps_MNAR(
+    # MNAR
+    def generate_MNAR1(
             self,
-            X,
-            eps
+            X: torch.tensor,
+            eps: float
         ):
+        """
+        Generate MNAR:
+            P((0,0,0)|x) = 1 - P((0,1,0)|x) - P((1,0,0)|x)
+            P((0,1,0)|x) = (2 - max(P(x2), c))/3
+            P((1,0,0)|x) = (1 - max(P(x1), c))/3
+
+        Returns:
+            M: MNAR missingness mask with shape X.shape
+        """
         U1,U2 = self.latent_uniforms(X)
         
         G1 = torch.maximum(U1, 2*self.delta)
@@ -370,33 +414,3 @@ class DataGenerator:
         )
 
         return masks[choice]
-
-
-    # --------------------------------------------------
-    # Main
-    # --------------------------------------------------
-    def generate(
-        self,
-        n:int,
-        d:int,
-        seed:Optional[int]=None
-    ) -> Tuple[torch.Tensor,torch.Tensor]:
-        if seed is not None:
-            torch.manual_seed(seed)
-        X = self.sample_truth(n, d)
-        M = self.sample_missingness(X)
-        return X,M
-
-
-    def generate_eps_MNAR(
-            self,
-            eps: float,
-            n:int,
-            d:int,
-            seed:Optional[int]=None
-        ) -> Tuple[torch.Tensor,torch.Tensor]:
-            if seed is not None:
-                torch.manual_seed(seed)
-            X = self.sample_truth(n, d)
-            M = self.sample_eps_MNAR(X, eps)
-            return X,M
