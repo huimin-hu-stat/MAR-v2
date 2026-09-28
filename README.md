@@ -2,5 +2,5 @@
 
 `analyze_MNAR_MLE`: $(1-\epsilon) \text{MAR} + \epsilon \text{MNAR}$ example of density estimation
 
-`src`: data generato, estimator
+`src`: data generator, estimator, metric
 
