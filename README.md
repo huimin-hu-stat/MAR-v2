@@ -1,4 +1,6 @@
-# MAR Gaussian Mixture: Density Estimation with Gaussian Mixture directly on data with MAR missingness
+# Version 2 of MAR Gaussian Mixture: Density Estimation with Gaussian Mixture directly on data with MAR missingness
 
-This repository contains the official implementation of the paper:
+`analyze_MNAR_MLE`: $(1-\epsilon) \text{MAR} + \epsilon \text{MNAR}$ example of density estimation
+
+`src`: data generator, estimator, metric
 
