@@ -1,4 +1,4 @@
-from src.dg import DataGenerator
+from MARv2.src.data_generator import DataGenerator
 from src.run_experiments import run
 from src.utils import plot1
 
