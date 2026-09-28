@@ -278,7 +278,8 @@ class GaussianMixtureMAR:
         reg_covar=1e-6,
         n_init=5,
         _k_tol=1,
-        device="cpu"
+        device="cpu",
+        verbose=False
     ):
         self.k_min, self.k_max = k_range
         self.criterion = criterion
@@ -293,6 +294,7 @@ class GaussianMixtureMAR:
         self.device = device
         self._k_cache = {}
         self._k_tol = _k_tol
+        self.verbose = verbose
 
     def _num_p(self, D, K):
 
@@ -352,7 +354,8 @@ class GaussianMixtureMAR:
         )
 
         self._k_cache[k] = (score, model, p)
-        print(f"  k={k} -> score={score:.4f}")
+        if self.verbose:
+            print(f"  k={k} -> score={score:.4f}")
         return self._k_cache[k]
 
 

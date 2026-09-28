@@ -15,14 +15,14 @@ class DataGenerator:
         sigma: torch.tensor = None, # for gaussian mixture
         pi: torch.tensor = None, # for gaussian mixture
         alpha: float = 0.7, # copula
-        delta: float = 0.01, # positivity
+        c: float = 0.01, # positivity
         df: Optional[int] = None,
         device: str = "cpu",
         dtype=torch.float64,
     ):
         self.distr = distr
         self.alpha = alpha
-        self.delta = delta
+        self.c= torch.tensor(c, dtype=dtype, device=device)
         self.df = df
         self.device = device
         self.dtype = dtype
@@ -41,9 +41,9 @@ class DataGenerator:
                 "Gassian mixture requires mu, sigma, pi"
             )
 
-        if delta > 1:
+        if c > 1:
             raise ValueError(
-                "delta is too large (> 1)"
+                "c is too large (> 1)"
             )
 
     # --------------------------------------------------
@@ -308,9 +308,8 @@ class DataGenerator:
         """
         U1, U2 = self.latent_uniforms(X) # X -> marginal cdfs
 
-        c = torch.tensor(self.delta, device=U1.device, dtype=U1.dtype)
-        G1 = torch.maximum(U1, c)
-        G2 = torch.maximum(U2, c)
+        G1 = torch.maximum(U1, self.c)
+        G2 = torch.maximum(U2, self.c)
 
         probs = torch.stack(
             [
@@ -363,8 +362,8 @@ class DataGenerator:
         """
         U1,U2 = self.latent_uniforms(X)
         
-        G1 = torch.maximum(U1, 2*self.delta)
-        G2 = torch.maximum(U2, 2*self.delta)
+        G1 = torch.maximum(U1, self.c)
+        G2 = torch.maximum(U2, self.c)
 
         P_MAR = torch.stack(
             [
