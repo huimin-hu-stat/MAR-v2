@@ -1,5 +1,5 @@
 import torch
-from typing import Optional, Tuple
+from typing import Optional
 
 from torch.distributions import Normal, StudentT, MultivariateNormal, Categorical
 
