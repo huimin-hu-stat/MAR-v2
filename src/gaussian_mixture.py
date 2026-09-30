@@ -73,40 +73,26 @@ class SingleMixture:
     def _estimate_log_prob(self, X, M):
         """
         Compute:
-        log N(x | mu, Sigma)
+        log N(x^(m) | mu, Sigma)
         
-        Diagonal covariance
+        Return:
+            torch.tensor (N, K, D)
         """
-
-        N, D = X.shape
-
-        # diff: (N,K,D)
+        # (N, K, D)
         diff = (X[:, None, :] - self.mu[None, :, :]) * M[:, None, :]
-
-        # variance: (K,D)
+        # (K, D)
         var = self.cov
+        # (N, K, D)
+        mahal = diff ** 2 / var[None, :, :]
+        # (N, K, D)
+        log_var = torch.log(var)[None, :, :] * M[:, None, :]
 
-        # Mahalanobis distance:
-        # (N,K,D) / (K,D) -> (N,K,D)
-        # 0 for missing entries
-        mahal = (diff ** 2 / var[None, :, :]).sum(dim=2)
-
-        # log determinant:
-        # log |Sigma| = sum(log(var))
-        # (K,D) * (N,K,D)
-        # mask out the missingness
-        log_det = (torch.log(var)[None, :, :] * M[:, None, :]).sum(dim=(2))
-
-        return -0.5 * (
-            D * math.log(2 * math.pi) # to confirm
-            + log_det #(N,K)
-            + mahal #(N,K)
-        )
+        return -0.5 * (M[:, None, :] * math.log(2 * math.pi) + log_var + mahal)
 
 
     def _e_step(self, X, M):
 
-        log_prob = self._estimate_log_prob(X, M)
+        log_prob = self._estimate_log_prob(X, M).sum(dim=2)
 
         weighted = (
             log_prob
@@ -403,7 +389,7 @@ class GaussianMixtureMAR:
         return self.best_model.sample(n_samples)
 
     def evaluate(self, X):
-        log_prob = self.best_model._estimate_log_prob(X, torch.ones_like(X))
+        log_prob = self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)).sum(dim=2)
         weighted = (
                     log_prob # (N, K)
                     +
