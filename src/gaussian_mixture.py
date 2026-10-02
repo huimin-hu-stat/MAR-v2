@@ -388,6 +388,35 @@ class GaussianMixtureMAR:
     def sample(self, n_samples):
         return self.best_model.sample(n_samples)
 
+
+    def impute(self, X, M):
+        pihat, muhat, sigmahat = self.best_params
+        # (N, K, D) log-marginals of each gaussian component of pn
+        log_pn_x = self.best_model._estimate_log_prob(X, M)
+        # log-posterior of the mixture measure before normalizing
+        log_p_pi = log_pn_x.sum(dim=2) + torch.log(pihat)[None, :]
+        log_p_pi -= torch.logsumexp(log_p_pi, dim=1)[:, None]
+        p_pi = torch.exp(log_p_pi)
+
+
+        # Choose mixture component for each sample
+        comp = torch.multinomial(p_pi, 1, replacement=True).squeeze(1)  # (N,)
+
+        # Means and variances for selected components
+        mu = muhat[comp]          # (N, D)
+        sigma = sigmahat[comp]        # (N, D)
+
+        # Standard normal noise
+        eps = torch.randn_like(mu)
+
+        # Sample
+        Ximp = mu + sigma * eps
+        Ximp[M==1] = X[M==1]
+
+        return Ximp
+
+
+
     def evaluate(self, X):
         log_prob = self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)).sum(dim=2)
         weighted = (
