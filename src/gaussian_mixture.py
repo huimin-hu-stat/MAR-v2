@@ -407,7 +407,7 @@ class GaussianMixtureMAR:
         sigma = sigmahat[comp]        # (N, D)
 
         # Standard normal noise
-        eps = torch.randn_like(mu)
+        eps = torch.randn_like(mu, dtype=X.dtype, device=self.device)
 
         # Sample
         Ximp = mu + sigma * eps
