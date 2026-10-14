@@ -12,7 +12,7 @@ class SingleMixture:
         tol=1e-6,
         eps = 1e-6,
         reg_covar=1e-6,
-        n_init=5,
+        n_init=20,
         device="cpu"
     ):
         self.K = n_components
@@ -259,7 +259,7 @@ class GaussianMixtureMAR:
         tol=1e-6,
         eps=1e-6,
         reg_covar=1e-6,
-        n_init=5,
+        n_init=20,
         _k_tol=1,
         device="cpu",
         verbose=False
@@ -418,6 +418,9 @@ class GaussianMixtureMAR:
 
 
     def evaluate(self, X):
+        """
+        Compute the density score
+        """
         log_prob = self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)).sum(dim=2)
         weighted = (
                     log_prob # (N, K)
@@ -431,3 +434,11 @@ class GaussianMixtureMAR:
                     keepdim=True
                 ) # (N,)
         return log_norm.mean()
+
+    def which_cluster(self, X):
+        """
+        Find which cluster each observation is mostly likely from
+        """
+        log_prob = self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)).sum(dim=2) # (N, K)
+        return torch.argmax(log_prob, dim=1)
+

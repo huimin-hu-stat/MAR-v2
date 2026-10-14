@@ -198,7 +198,7 @@ class DataGenerator:
 
         return mvn.sample((n,))
     
-    def sample_gmm(
+    def sample_gaussian_mixture(
         self,
         n: int
     ):
@@ -213,16 +213,17 @@ class DataGenerator:
         # 1. sample component indices
         z = torch.multinomial(pi, n, replacement=True)  # (N,)
 
-        # 2. sample standard normals
-        eps = torch.randn(n, d)
+        # # 2. sample standard normals
+        # eps = torch.randn(n, d)
 
         # 3. gather parameters for each sample
         mu_z = self.mu[z]        # (N, d)
-        sigma_z = self.sigma[z]  # (N, d)
+        sigma_z = self.sigma[z]  # (N, d, d)
 
-        # 4. reparameterization
-        x = mu_z + sigma_z * eps
-        return x
+        # # 4. reparameterization
+        # x = mu_z + sigma_z * eps
+
+        return MultivariateNormal(mu_z, sigma_z).sample()
     
 
     # --------------------------------------------------
@@ -237,7 +238,7 @@ class DataGenerator:
             return self.sample_gaussian(n, d)
         
         if self.distr == 'gaussian_mixture':
-            return self.sample_gmm(n)
+            return self.sample_gaussian_mixture(n)
 
         U = self.sample_gaussian_copula(n, d)
 
