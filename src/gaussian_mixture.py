@@ -419,7 +419,7 @@ class GaussianMixtureMAR:
         return self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)) # (N, K, D)
 
 
-    def log_prob_estimated(self, X):
+    def log_prob_x(self, X):
         weighted = (
                     self.log_prob_N_K_D(X).sum(dim=2) # (N, K)
                     +
