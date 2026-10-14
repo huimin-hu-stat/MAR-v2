@@ -10,9 +10,9 @@ class SingleMixture:
         cov_type,
         max_iter=100,
         tol=1e-6,
-        eps = 1e-6,
+        eps=1e-6,
         reg_covar=1e-6,
-        n_init=20,
+        n_init=10,
         device="cpu"
     ):
         self.K = n_components
@@ -415,30 +415,28 @@ class GaussianMixtureMAR:
 
         return Ximp
 
+    def log_prob_N_K_D(self, X):
+        return self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)) # (N, K, D)
 
 
-    def evaluate(self, X):
-        """
-        Compute the density score
-        """
-        log_prob = self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)).sum(dim=2)
+    def log_prob_estimated(self, X):
         weighted = (
-                    log_prob # (N, K)
+                    self.log_prob_N_K_D(X).sum(dim=2) # (N, K)
                     +
                     torch.log(self.best_model.pi) # (K,)
                 )
-        
-        log_norm = torch.logsumexp(
-                    weighted,
-                    dim=1,
-                    keepdim=True
-                ) # (N,)
-        return log_norm.mean()
+        return torch.logsumexp(weighted, dim=1, keepdim=True) #(N,)
+
+    def density_score(self, X):
+        """
+        Compute the density score
+        """
+        return self.log_prob(X).mean()
+
 
     def which_cluster(self, X):
         """
         Find which cluster each observation is mostly likely from
         """
-        log_prob = self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)).sum(dim=2) # (N, K)
-        return torch.argmax(log_prob, dim=1)
+        return torch.argmax(self.log_prob_N_K_D(X).sum(dim=2), dim=1)
 
