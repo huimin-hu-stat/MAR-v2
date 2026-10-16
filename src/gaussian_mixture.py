@@ -414,6 +414,7 @@ class GaussianMixtureMAR:
 
         return Ximp
 
+    #### log pdf
     def log_prob_N_K_D(self, X):
         return self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)) # (N, K, D)
 
