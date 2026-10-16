@@ -398,7 +398,6 @@ class GaussianMixtureMAR:
         log_p_pi -= torch.logsumexp(log_p_pi, dim=1)[:, None]
         p_pi = torch.exp(log_p_pi)
 
-
         # Choose mixture component for each sample
         comp = torch.multinomial(p_pi, 1, replacement=True).squeeze(1)  # (N,)
 
@@ -426,6 +425,13 @@ class GaussianMixtureMAR:
                     torch.log(self.best_model.pi) # (K,)
                 )
         return torch.logsumexp(weighted, dim=1, keepdim=True) #(N,)
+
+
+    def log_prob_x_m(self, X, M):
+        ll = self.best_model._estimate_log_prob(X, M).sum(dim=2)
+        ll += torch.log(self.best_model.pi)
+        return torch.logsumexp(ll, dim=1, keepdim=True) # (N,)
+    
 
     def density_score(self, X):
         """
