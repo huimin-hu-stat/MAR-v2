@@ -105,7 +105,7 @@ class MotivatingExample:
     
     def _conditional(self, x):
         mean = self.alpha * x
-        std = torch.sqrt(torch.tensor(1.0 - self.alpha**2, device=x.device))
+        std = torch.sqrt(torch.tensor(1.0 - self.alpha**2, device=x.device, dtype=x.dtype))
         return torch.distributions.Normal(mean, std).sample()
 
     def _get_conditional_Xtest(self, X, M):
