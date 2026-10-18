@@ -415,10 +415,12 @@ class GaussianMixtureMAR:
         return Ximp
 
     #### log pdf
-    def log_prob_N_K_D(self, X):
-        return self.best_model._estimate_log_prob(X, torch.ones_like(X, device=X.device)) # (N, K, D)
+    def log_prob_N_K_D(self, X, M=None):
+        if M is None:
+            M = torch.ones_like(X, device=X.device)
+        return self.best_model._estimate_log_prob(X, M) # (N, K, D)
 
-
+    
     def log_prob_x(self, X, cols=None):
         d = self.best_model.mu.shape[1]
         
@@ -445,12 +447,14 @@ class GaussianMixtureMAR:
         """
         Compute the density score
         """
-        return self.log_prob(X).mean()
+        return self.log_prob_x(X).mean()
 
 
-    def which_cluster(self, X):
+    def which_cluster(self, X, M=None):
         """
         Find which cluster each observation is mostly likely from
         """
-        return torch.argmax(self.log_prob_N_K_D(X).sum(dim=2), dim=1)
+        if M is None:
+            M = torch.ones_like(X, device=X.device)
+        return torch.argmax(self.log_prob_N_K_D(X, M).sum(dim=2), dim=1)
 

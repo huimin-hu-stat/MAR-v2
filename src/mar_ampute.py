@@ -19,6 +19,25 @@ from rpy2.robjects.packages import importr
 mice = importr("mice")
 
 
+def missingness_dist(d, p_complete, p_all_missing=None):
+    """
+    Functions to set the marginal distribution of the missingness variable
+    - input1: the probability of the completely observed
+    - input2: the probability of the worst missingness, i.e., all missing except the last column
+    """
+    n_pats = 2**(d-1) - 1
+    if p_all_missing is None:
+        pm = np.ones(n_pats)
+        pm /= pm.sum()
+        pm *= 1 - p_complete
+        return np.append(pm, p_complete)
+
+    pm = np.ones(n_pats - 1)
+    pm /= pm.sum()
+    pm *= 1 - p_complete - p_all_missing
+    pm = np.insert(pm, 0, p_all_missing)
+    return np.append(pm, p_complete)
+
 
 # ============================================================
 # Generate all unique MAR-compatible patterns
