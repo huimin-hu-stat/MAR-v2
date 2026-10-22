@@ -458,3 +458,6 @@ class GaussianMixtureMAR:
             M = torch.ones_like(X, device=X.device)
         return torch.argmax(self.log_prob_N_K_D(X, M).sum(dim=2), dim=1)
 
+    def get_resp(self, X, M):
+        return self.best_model._e_step(X, M)[1]
+
