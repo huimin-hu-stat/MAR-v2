@@ -369,10 +369,13 @@ class GaussianMixtureMAR:
 
 
     def fit(self, X, M):
+        XX = X.clone()
+        if torch.isnan(X).any():
+            XX[M == 0] = 0
 
         best_score = torch.inf
 
-        self._search_k(X, M)
+        self._search_k(XX, M)
 
         for k, (score, model, _) in self._k_cache.items():
             if score < best_score:
@@ -390,9 +393,13 @@ class GaussianMixtureMAR:
 
 
     def impute(self, X, M):
+        XX = X.clone()
+        if torch.isnan(X).any():
+            XX[M == 0] = 0
+        
         pihat, muhat, sigmahat = self.best_params
         # (N, K, D) log-marginals of each gaussian component of pn
-        log_pn_x = self.best_model._estimate_log_prob(X, M)
+        log_pn_x = self.best_model._estimate_log_prob(XX, M)
         # log-posterior of the mixture measure before normalizing
         log_p_pi = log_pn_x.sum(dim=2) + torch.log(pihat)[None, :]
         log_p_pi -= torch.logsumexp(log_p_pi, dim=1)[:, None]
