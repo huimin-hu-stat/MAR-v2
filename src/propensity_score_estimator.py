@@ -31,59 +31,33 @@ predict_prop <- function(ps, newdata, pattern) {
 predict_prop_nmmipw = ro.r["predict_prop"]
 
 
-
-class PropensityScoreEstimator(MotivatingExample, Converter):
-
+class PropensityScoreEstimator(Converter):
     """
-    Inherit two classes
+    Base model for estimating Propensity Score, X and M are required
 
-    MotivatingExample: data generation and relevant methods for ME
-
-    Converter: R-to-python two-way conversion
+    MotivatingExamplePSE is specifically for estimating and comparing PS of data from motivating examples
     """
 
     def __init__(self, 
-                 X=None, 
-                 M=None, 
-                 type='mar', 
-                 n=5000, 
-                 d=3, 
-                 model_k=(0, 10), # k_range for fitting the GaussianMixtureMAR
-                 device='cpu', 
-                 dtype=torch.float32):
-        MotivatingExample.__init__(self, type=type, n=n, d=d, model_k=model_k, device=device, dtype=dtype)
+                 X: torch.tensor = None,
+                 M: torch.tensor = None,
+                 model_k: tuple = (0,10),
+                 cov_type: str = 'uni_diag'
+                 ):
         Converter.__init__(self)
 
-        # Simulate motivating example
-        if (X is None) & (M is None):
-            self.X = self.get_X()
-            self.M = self.get_M(self.X)
-        else: # Use any MAR (X, M)
-            self.X = X
-            self.M = M
+        if X is None or M is None:
+            raise ValueError("Missing input: X or M is None.")
 
-        # Fit the main model -- k_range 
-        self.model = GaussianMixtureMAR(k_range=model_k)
-        self.model.fit(self.X, self.M)
+        # Fit the main model -- k_range
+        self.model = GaussianMixtureMAR(k_range=model_k, cov_type=cov_type)
+        self.model.fit(X, M)
 
-    def get_Xtest_cond_x1(self):
-        """
-        Randomly sample one realization of X1, then condition on X1 to obtain X2
-        (for the MAR motivating example only)
-        """
-        if len(self.X) > 3:
-            return NotImplemented
+        self.X = X
+        self.M = M
+        self.model_k = model_k
+        self.cov_type = cov_type
 
-        X = torch.empty_like(self.X)
-        # X1 is constant across the rows
-        X[:, 0] = torch.distributions.Normal(0,1).sample() * torch.ones(self.n, device=self.device)
-        # X2|X1
-        X[:, 1]= self._conditional(X[:, 0]) # method in motivating example to simulat X2|X1
-
-        if len(self.X) == 3:
-            X[:, 2] = torch.distributions.Normal(0,1).sample(self.n)
-
-        return X
 
     def _log_prob_xp_cond_m(self, Xtest, m):
         """
@@ -92,10 +66,11 @@ class PropensityScoreEstimator(MotivatingExample, Converter):
         # Extract X^(m) for some m and keep only the cols observed
         Xp = self.X[(self.M==m).all(dim=1)][:, m.bool()]
         # Fit a complete data GMM
-        Mp = torch.ones_like(Xp, device=Xp.device)
-        g = GaussianMixtureMAR(k_range=(0,10))
+        Mp = torch.ones_like(Xp)
+        g = GaussianMixtureMAR(k_range=self.model_k, cov_type=self.cov_type)
         g.fit(Xp, Mp)
         return g.log_prob_x(Xtest[:, m.bool()]) # Estimate the log density using the density estimate of partial data
+
 
     def _log_prob_xp(self, Xtest, m):
         """
@@ -104,11 +79,13 @@ class PropensityScoreEstimator(MotivatingExample, Converter):
         """
         return self.model.log_prob_x(Xtest, cols=torch.where(m==1))
 
+
     def _phat_M(self, m):
         """
         Compute/estimate P(M=m)
         """
-        return ((self.M == m).all(dim=1)).sum() / self.n
+        return ((self.M == m).all(dim=1)).sum() / len(self.X)
+
 
     def _estimate(self, Xtest, m):
         """
@@ -120,6 +97,7 @@ class PropensityScoreEstimator(MotivatingExample, Converter):
         p1 = self._phat_M(m)
         return (lp1 - lp2).exp() * p1
 
+
     # def estimate_by_subtraction(self, Xtest):
     #     m = torch.ones(self.d, device=self.device)
     #     m1 = m.clone()
@@ -129,14 +107,69 @@ class PropensityScoreEstimator(MotivatingExample, Converter):
     #     raw_est = 1 - self._estimate(Xtest, m1) - self._estimate(Xtest, m2)
     #     return torch.clamp(raw_est, min=0)
 
+
     def estimate_propensity_score_gmm(self, Xtest):
         """
         Compute propensity score using direction method
         (... indirect: subtraction)
         """
-        m = torch.ones(self.d, device=self.device)
+        if Xtest.shape[1] != self.X.shape[1]:
+            raise ValueError(
+                f"Invalid input dimension: Xtest must be the same dimension of Xtrain, got shape {Xtest.shape}."
+            )
+        m = torch.ones(self.X.shape[1], device=self.X.device)
         return self._estimate(Xtest, m)
 
+    
+    def estimate_propensity_score_nmm(self, Xtest):
+        """
+        Compute the propensity score using NMMIPW:prop_compute
+        """
+        if Xtest.shape[1] != self.X.shape[1]:
+            raise ValueError(
+                f"Invalid input dimension: Xtest must be the same dimension of Xtrain, got shape {Xtest.shape}."
+            )
+        rX = self.to_r(self.X)
+        rM = self.to_r(self.M)
+        rXt = self.to_r(Xtest)
+        pre = nmm.nmm_preprocessing(rX, rM)
+        ps = nmm.PS(rX, pre.rx2('R'), pre.rx2('pattern'))
+        prop_score = predict_prop_nmmipw(ps, rXt, pre.rx2('pattern'))
+        return torch.tensor(prop_score, device=self.X.device, dtype=self.X.dtype)
+
+
+
+
+class MotivatingExamplePSE(MotivatingExample, PropensityScoreEstimator):
+
+    def __init__(self,
+                 type: str = 'mar', 
+                 n: int = 5000, 
+                 d: int =2, 
+                 alpha: float = 0.7, 
+                 model_k: tuple = (0, 10),
+                 cov_type: str = 'uni_diag'
+                 ):
+        MotivatingExample.__init__(self, type, n, d, alpha, model_k)
+        X = self.get_X()
+        M = self.get_M(X)
+        
+        PropensityScoreEstimator.__init__(self, X=X, M=M, model_k=model_k, cov_type=cov_type)
+
+    def get_Xtest_cond_x1(self):
+        """
+        Randomly sample one realization of X1, then condition on X1 to obtain X2
+        (for the MAR motivating example only)
+        """
+        X = torch.empty_like(self.X)
+        # X1 is constant across the rows
+        X[:, 0] = torch.distributions.Normal(0,1).sample() * torch.ones(self.n, device=self.device)
+        # X2|X1
+        X[:, 1]= self._conditional(X[:, 0]) # method in motivating example to simulat X2|X1
+
+        if self.d == 3:
+            X[:, 2] = torch.distributions.Normal(0,1).sample(self.n)
+        return X
 
     def true_score_motivating_example_mar(self, Xtest):
         """
@@ -146,18 +179,3 @@ class PropensityScoreEstimator(MotivatingExample, Converter):
         X1 = Xtest[:,0]
         X2 = Xtest[:,1]
         return (norm.cdf(X1) + norm.cdf(X2)) / 3
-
-    
-    def estimate_propensity_score_nmm(self, Xtest):
-        """
-        Compute the propensity score using NMMIPW:prop_compute
-        """
-        rX = self.to_r(self.X)
-        rM = self.to_r(self.M)
-        rXt = self.to_r(Xtest)
-        pre = nmm.nmm_preprocessing(rX, rM)
-        ps = nmm.PS(rX, pre.rx2('R'), pre.rx2('pattern'))
-        prop_score = predict_prop_nmmipw(ps, rXt, pre.rx2('pattern'))
-        return np.array(prop_score)
-
-
