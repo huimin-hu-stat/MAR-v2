@@ -1,5 +1,3 @@
-#%Hellinger distance, energy distance, quantile of GMM
-
 import torch
 import numpy as np
 from torch.distributions import Normal, Independent, MultivariateNormal

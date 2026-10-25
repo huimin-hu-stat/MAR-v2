@@ -3,6 +3,8 @@ import numpy as np
 import rpy2.robjects as ro
 from rpy2.robjects.packages import importr
 
+from .converter import Converter
+
 
 # import os
 # from pathlib import Path
@@ -21,20 +23,7 @@ from rpy2.robjects.packages import importr
 
 mice = importr("mice")
 
-class AmputeMAR:
-
-    def _to_r_dataframe(self, X):
-        return ro.DataFrame({
-            f"X{j + 1}": ro.FloatVector(X[:, j])
-            for j in range(X.shape[1])
-        })
-
-    def _to_r_matrix(self, X):
-        return ro.r.matrix(
-            ro.IntVector(X.T.flatten().tolist()),
-            nrow=X.shape[0],
-            ncol=X.shape[1],
-        )
+class AmputeMAR(Converter):
 
     @staticmethod
     def sample_patterns(d, n, rng=None):
@@ -73,8 +62,6 @@ class AmputeMAR:
             Observation mask: 1 = observed, 0 = missing.
         """
         n, d = X.shape
-        device = X.device
-        X_np = X.detach().cpu().numpy().astype(float)
 
         if patterns is None:
             patterns = self.sample_patterns(d, n, rng)
@@ -85,21 +72,16 @@ class AmputeMAR:
         if prop is None:
             prop = n_pats / (n_pats + 1)
 
-        X_NA_np = X_np.copy()
-
         if n_pats > 0:
             result = mice.ampute(
-                self._to_r_dataframe(X_np),
-                patterns=self._to_r_matrix(patterns),
+                self.to_r(X),
+                patterns=self.to_r(patterns),
                 prop=prop,              # freq defaults to equal across patterns
                 mech="MAR",
                 bycases=True,
             )
-            X_NA_np = np.asarray(result.rx2("amp")).T   # (n, d)
+            X_NA = torch.tensor(self.to_python(result.rx2("amp")), device=X.device, dtype=X.dtype)   # (n, d)
 
-        M_np = (~np.isnan(X_NA_np)).astype(np.float32)
+        M = ~torch.isnan(X_NA)
 
-        return (
-            torch.tensor(X_NA_np, dtype=X.dtype, device=device),
-            torch.tensor(M_np, dtype=X.dtype, device=device),
-        )
+        return X_NA, M
