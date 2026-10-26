@@ -38,7 +38,7 @@ class AmputeMAR(Converter):
             if incomplete.shape[0] > 0:
                 return incomplete
 
-    def ampute(self, X, patterns=None, prop=None, rng=None, miss_type='RIGHT'):
+    def ampute(self, X, patterns=None, prop=None, rng=None, miss_type=None, weights=None):
         """
         Parameters
         ----------
@@ -79,7 +79,8 @@ class AmputeMAR(Converter):
                 prop=prop,              # freq defaults to equal across patterns
                 mech="MAR",
                 bycases=True,
-                type=miss_type
+                type=self.to_r(miss_type),
+                weights=self.to_r(weights)
             )
             amp = self.to_python(result.rx2("amp"))
             amp = amp.to_numpy() if hasattr(amp, "to_numpy") else np.asarray(amp)

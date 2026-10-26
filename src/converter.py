@@ -63,6 +63,10 @@ class Converter:
     def to_r(self, x: Any) -> Any:
         """Convert a Python object to its corresponding R representation."""
 
+        # 0. None -> R NULL
+        if x is None:
+            return ro.NULL
+        
         # 1. PyTorch tensor
         try:
             import torch
