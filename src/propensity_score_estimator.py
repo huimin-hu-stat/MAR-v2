@@ -31,6 +31,100 @@ predict_prop <- function(ps, newdata, pattern) {
 predict_prop_nmmipw = ro.r["predict_prop"]
 
 
+import nlopt
+
+def nmm_ipw_fast(X, O):
+    """
+    Created by Claude AI!
+    Python version of NMMIPW::nmm_preprocessing + NMMIPW::PS (only the 'prop' output).
+    X: array (n x K) with NaN for missing entries
+    O: array (n x K) with 1 = observed, 0 = missing
+    Returns propensities of the fully observed rows (same as ps$prop in R).
+    """
+    X = np.asarray(X, dtype=float)
+    O = np.asarray(O).astype(int)
+    N, K = X.shape
+
+    # ---- preprocessing (same as nmm_preprocessing) ----
+    code = ((1 - O) * (2 ** np.arange(K))).sum(axis=1)       # R - 1
+    uniq = np.unique(code)
+    R = np.searchsorted(uniq, code) + 1                      # 1..M, 1 = fully observed
+    pattern = 1 - ((uniq[:, None] >> np.arange(K)) & 1)      # M x K, 1 = observed
+    M = len(uniq)
+    if not np.all(pattern[0] == 1):
+        raise ValueError("No fully observed rows: NMMIPW cannot be used.")
+
+    Xz = np.nan_to_num(X, nan=0.0)                           # NA -> 0, like R
+    idx1 = np.where(R == 1)[0]                               # complete cases
+    sizes = [int(pattern[m].sum()) + 1 for m in range(1, M)]
+    offs = np.concatenate([[0], np.cumsum(sizes)]).astype(int)
+
+    A, B = [], []        # design matrices: rows of pattern m / complete-case rows
+    for m in range(1, M):
+        cols = pattern[m] == 1
+        full = np.hstack([np.ones((N, 1)), Xz[:, cols]])
+        A.append(full[R == m + 1])
+        B.append(full[idx1])
+
+    def link(x, s):                                          # same as link_func
+        t = np.exp(-np.abs(x))
+        t = t / (1.0 + t)
+        return np.where(x <= 0, t * (1.0 - s) / 0.5, 1.0 - t * s / 0.5)
+
+    n_par = int(offs[-1])
+    x0 = np.zeros(n_par)
+    for j in range(M - 1):
+        x0[offs[j]] = np.log(1.0 / M)                        # same start values as R
+
+    results = []
+    for s in 10.0 ** (-np.arange(5, 10)):                    # sigma_star candidates
+        best = {"x": None, "f": np.inf}
+
+        def obj(x, grad):
+            g = 0.0
+            tmp = np.zeros(len(idx1))
+            for j in range(M - 1):
+                b = x[offs[j]:offs[j + 1]]
+                g += np.log(link(A[j] @ b, s)).sum()
+                tmp += link(B[j] @ b, s)
+            g += np.log(np.maximum(1.0 - tmp, s)).sum()
+            f = -g / N
+            if f < best["f"] and np.all(tmp - 1.0 + s <= 1e-8):   # remember best feasible point
+                best["f"], best["x"] = f, np.array(x)
+            return float(f)
+
+        def cons(result, x, grad):
+            tmp = np.zeros(len(idx1))
+            for j in range(M - 1):
+                tmp += link(B[j] @ x[offs[j]:offs[j + 1]], s)
+            result[:] = tmp - 1.0 + s
+
+        opt = nlopt.opt(nlopt.LN_COBYLA, n_par)
+        opt.set_min_objective(obj)
+        opt.set_lower_bounds(-4.0 * np.ones(n_par))
+        opt.set_upper_bounds(4.0 * np.ones(n_par))
+        opt.add_inequality_mconstraint(cons, 1e-8 * np.ones(len(idx1)))
+        opt.set_xtol_rel(1e-4)
+        opt.set_maxeval(100000)
+        try:
+            xs = opt.optimize(x0)
+            fs = opt.last_optimum_value()
+        except Exception:                                    # e.g. "roundoff-limited": R still returns a result
+            if best["x"] is None:
+                raise
+            xs, fs = best["x"], best["f"]
+        results.append((fs, s, xs))
+
+    fs, sigma_star, para = min(results, key=lambda r: r[0])  # like which.min
+
+    tmp = np.zeros(len(idx1))
+    for j in range(M - 1):
+        tmp += link(B[j] @ para[offs[j]:offs[j + 1]], sigma_star)
+    return 1.0 - tmp
+
+
+
+
 class PropensityScoreEstimator(Converter):
     """
     Base model for estimating Propensity Score, X and M are required
@@ -121,14 +215,19 @@ class PropensityScoreEstimator(Converter):
         return self._estimate(Xtest, m)
 
     
-    def estimate_propensity_score_nmm(self, Xtest):
+    def estimate_propensity_score_nmm(self, Xtest, fast=True):
         """
         Compute the propensity score using NMMIPW:prop_compute
         """
         if Xtest.shape[1] != self.X.shape[1]:
-            raise ValueError(
-                f"Invalid input dimension: Xtest must be the same dimension of Xtrain, got shape {Xtest.shape}."
-            )
+                    raise ValueError(
+                        f"Invalid input dimension: Xtest must be the same dimension of Xtrain, got shape {Xtest.shape}."
+                    )
+        # Python implementation of NMMIPW
+        if fast:
+            return nmm_ipw_fast(X=self.X, O=self.M)
+
+        # NMMIPW:prop_compute()
         rX = self.to_r(self.X)
         rM = self.to_r(self.M)
         rXt = self.to_r(Xtest)
