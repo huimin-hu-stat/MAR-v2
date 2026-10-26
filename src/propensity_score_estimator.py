@@ -179,3 +179,20 @@ class MotivatingExamplePSE(MotivatingExample, PropensityScoreEstimator):
         X1 = Xtest[:,0]
         X2 = Xtest[:,1]
         return (norm.cdf(X1) + norm.cdf(X2)) / 3
+
+
+    def estimate_propensity_score_gmm_mar(self, Xtest):
+        """
+        Normalize by W=1
+        """
+        m = torch.ones(self.d, device=self.device)
+        raw_score = self._estimate(Xtest, m)
+        
+        m1 = m.clone()
+        m2 = m.clone()
+        m1[0] = 0
+        m2[1] = 0
+        
+        W = raw_score + self._estimate(Xtest, m1) + self._estimate(Xtest, m2)
+        
+        return raw_score / W
