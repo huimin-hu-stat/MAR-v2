@@ -38,7 +38,7 @@ class AmputeMAR(Converter):
             if incomplete.shape[0] > 0:
                 return incomplete
 
-    def ampute(self, X, patterns=None, prop=None, rng=None, miss_type=None):
+    def ampute(self, X, patterns=None, prop=None, rng=None, miss_type='RIGHT'):
         """
         Parameters
         ----------
