@@ -26,12 +26,14 @@ mice = importr("mice")
 class AmputeMAR(Converter):
 
     @staticmethod
-    def sample_patterns(d, n, rng=None):
+    def sample_patterns(d, n, npattern=None, rng=None):
         """Sample incomplete missingness patterns once (1 = observed, 0 = missing).
         Last column is always observed; all-ones rows are excluded."""
         rng = np.random.default_rng() if rng is None else rng
         while True:
-            npattern = int(rng.integers(3, max(round(n / 100), 3) + 1))
+            if npattern is None:
+                npattern = int(rng.integers(3, max(round(n / 100), 3) + 1))
+            #npattern= 10
             patterns = rng.integers(0, 2, size=(npattern, d - 1))
             patterns = np.hstack([patterns, np.ones((npattern, 1), dtype=int)])
             incomplete = patterns[~patterns.all(axis=1)]
