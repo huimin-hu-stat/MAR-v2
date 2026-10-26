@@ -80,7 +80,9 @@ class AmputeMAR(Converter):
                 mech="MAR",
                 bycases=True,
             )
-            X_NA = torch.tensor(self.to_python(result.rx2("amp")), device=X.device, dtype=X.dtype)   # (n, d)
+            amp = self.to_python(result.rx2("amp"))
+            amp = amp.to_numpy() if hasattr(amp, "to_numpy") else np.asarray(amp)
+            X_NA = torch.tensor(amp, device=X.device, dtype=X.dtype)   # (n, d)
 
         M = ~torch.isnan(X_NA)
 
