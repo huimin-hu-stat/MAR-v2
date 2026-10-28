@@ -3,30 +3,22 @@ from .propensity_score_estimator import PropensityScoreEstimator
 import torch
 import numpy as np
 
-class ParametricEstimation(GaussianMixtureMAR, PropensityScoreEstimator):
+class ParametricEstimation(PropensityScoreEstimator):
 
     def __init__(self,
                  X,
                  M,
-                 n_sim=2000,
+                 n_sim=None,
                  k_range=(0,20),
-                 criterion="bic",
-                 cov_type='uni_diag',
-                 max_iter=100,
-                 tol=0.000001,
-                 eps=0.000001,
-                 reg_covar=0.000001,
-                 n_init=20,
-                 _k_tol=1,
-                 device="cpu",
-                 verbose=False,):
-        GaussianMixtureMAR.__init__(self, k_range, criterion, cov_type, max_iter, tol, eps,
-                         reg_covar, n_init, _k_tol, device, verbose)
+                 cov_type='uni_diag',):
         PropensityScoreEstimator.__init__(self, X=X, M=M, model_k=k_range, cov_type=cov_type)
 
         self.X = X
         self.M = M
-        self.n_sim = n_sim
+        if n_sim is None:
+            self.n_sim = self.X.shape[0]
+        else:
+            self.n_sim = n_sim
         self.Xc = X[(M==1).all(dim=1)]
 
 
@@ -70,6 +62,37 @@ class ParametricEstimation(GaussianMixtureMAR, PropensityScoreEstimator):
     def estimate(self, func):
         Xtilde = self.model.sample(self.n_sim)[0]
         return func(Xtilde).item()
+
+    def linear_regression(self, Ycol, method, propensity_score=None):        
+        if method in ["generation", "imputation", "complete", "complete-case"]:
+            if method == "generation":
+                XYtilde = self.model.sample(self.n)[0]
+            elif method == "imputation":
+                XYtilde = self.model.impute(self.Xc, self.M)
+            elif method == "complete":
+                XYtilde = self.X
+            elif method == "complete-case":
+                XYtilde = self.Xc
+            
+            Xtilde = XYtilde[:, np.arange(XYtilde.shape[1]) != self.Ycol % XYtilde.shape[1]]
+            Ytilde = XYtilde[:, self.Ycol]
+            
+            lin_reg = LinearRegression().fit(Xtilde, Ytilde)
+            return lin_reg
+            
+        elif method == "ipw":
+            if propensity_score == None:
+                # use gmm_ipw by default
+                propensity_score = self._propensity_score_Xc("gmm")
+
+            # extract fully observed rows and fit weighted regression
+            Xm0 = self.Xc[:, np.arange(self.Xc[1]) != self.Ycol % self.Xc.shape[1]]
+            Ym0 = self.Xc[:, self.Ycol]
+            lin_reg = LinearRegression().fit(Xm0, Ym0, sample_weight=1/propensity_score)
+            return lin_reg
+            
+        else:
+            raise NotImplementedError(f"The method {method} was not implemented for linear regression.")
 
     # def get_truth(self, func):
     #     return func(self.sample_truth(self.n, self.d)).item()
