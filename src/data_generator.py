@@ -1,16 +1,17 @@
 import torch
 from typing import Optional
+from torch.distributions import MultivariateNormal
+from .ampute_mar import AmputeMAR
+from .motivating_example import MotivatingExample
+from .xu_transform import XUTransform
+import numpy as np
 
-from torch.distributions import Normal, StudentT, MultivariateNormal, Categorical
 
-# Similar to the DG in FLOWGEM
-# ADDITION: logistic distribution; gaussian copula; t distribution
-
-class DataGenerator:
+class DataGenerator(XUTransform):
 
     def __init__(
         self,
-        distr: str = "Normal",
+        distr: str = "normal",
         mu: torch.tensor = None, # for gaussian mixture
         sigma: torch.tensor = None, # for gaussian mixture
         pi: torch.tensor = None, # for gaussian mixture
@@ -19,7 +20,8 @@ class DataGenerator:
         df: Optional[int] = None,
         device: str = "cpu",
         dtype=torch.float64,
-    ):
+    ):  
+        super().__init__(distr=distr)
         self.distr = distr
         self.alpha = alpha
         self.c= torch.tensor(c, dtype=dtype, device=device)
@@ -31,26 +33,19 @@ class DataGenerator:
         self.sigma = sigma
         self.pi = pi
 
-        if distr == "Student t" and df is None:
-            raise ValueError(
-                "Student t requires df"
-            )
+        distr = distr.casefold()
+
+        if distr == "t" and df is None:
+            raise ValueError("Student t requires df")
         
         if distr == 'gaussian_mixture' and (mu is None or sigma is None or pi is None):
-            raise ValueError(
-                "Gassian mixture requires mu, sigma, pi"
-            )
+            raise ValueError("Gassian mixture requires mu, sigma, pi")
 
         if c > 1:
-            raise ValueError(
-                "c is too large (> 1)"
-            )
+            raise ValueError("c is too large (> 1)")
 
-    # --------------------------------------------------
-    # Utilities
-    # --------------------------------------------------
+
     def rand(self, *shape):
-
         return torch.rand(
             *shape,
             device=self.device,
@@ -58,10 +53,7 @@ class DataGenerator:
         )
 
 
-    # --------------------------------------------------
-    # Copula in FLOWGEM
-    # --------------------------------------------------
-    def sample_copula(
+    def _copula_flowgem(
         self,
         n: int,
         d: int
@@ -88,10 +80,7 @@ class DataGenerator:
         return torch.column_stack([U1, U2, Urest])
 
 
-    # --------------------------------------------------
-    # Gaussian copula
-    # --------------------------------------------------
-    def _ar1_cov(
+    def _ar1_like_covariance(
         self, 
         d: int
     ):
@@ -109,7 +98,7 @@ class DataGenerator:
         cov[-1, -1] = 1
         return cov
     
-    def sample_gaussian_copula(
+    def _copula_gaussian(
         self, 
         n: int, 
         d: int
@@ -124,7 +113,7 @@ class DataGenerator:
         Returns:
             U: (n,d) samples with Uniform(0,1) margins that are correlated via the gaussian copula
         """
-        R = self._ar1_cov(d)
+        R = self._ar1_like_covariance(d)
 
         # Cholesky factor such that R = LL^T with L lower-triangular
         L = torch.linalg.cholesky(R)
@@ -139,46 +128,9 @@ class DataGenerator:
         U = torch.special.ndtr(Z)
 
         return U
-    
-
-    # --------------------------------------------------
-    # Marginal inverse CDF
-    # --------------------------------------------------
-    def inverse_cdf(
-        self,
-        U: torch.tensor
-    ):
-        """
-        Uniforms -> data of targeted marginals
-        """
-        if self.distr == "UNI":
-            return U
-
-        elif self.distr == "Logistic":
-            eps = torch.finfo(
-                U.dtype).eps
-            U = torch.clamp(
-                U,
-                eps,
-                1-eps)
-            return torch.log(U/(1-U))
-
-        elif self.distr == "Normal":
-            normal = Normal(0, 1)
-            return normal.icdf(U)
-
-        elif self.distr == "Student t":
-            tdist = StudentT(self.df)
-            return tdist.icdf(U)
-
-        else:
-            raise NotImplementedError
 
 
-    # --------------------------------------------------
-    # Gaussian special case
-    # --------------------------------------------------
-    def sample_gaussian(
+    def _multivariate_gaussian(
         self,
         n: int,
         d: int
@@ -186,231 +138,62 @@ class DataGenerator:
         """
         Sample multivariate Gaussian with AR(1) like covariance
         """
-        mean = torch.zeros(
-            d,
-            device=self.device,
-            dtype=self.dtype
-        )
+        mean = torch.zeros(d, device=self.device, dtype=self.dtype)
+        cov = self._ar1_like_covariance(d=d)
+        return MultivariateNormal(mean, cov).sample((n,))
 
-        cov = self._ar1_cov(d=d)
 
-        mvn = MultivariateNormal(mean, cov)
-
-        return mvn.sample((n,))
-    
-    def sample_gaussian_mixture(
-        self,
-        n: int
-    ):
+    def _gaussian_mixture(self, n:int) -> torch.tensor:
         """
         Sample Gaussian mixture
         """
-        _, d = self.mu.shape
+        if not torch.isclose(self.pi.sum(), torch.tensor(1.0, device=self.device)):
+            self.pi = torch.softmax(self.pi, dim=0)
 
-        # normalize weights
-        pi = torch.softmax(self.pi, dim=0)
+        # sample component indices
+        z = torch.multinomial(self.pi, n, replacement=True)  # (N,)
 
-        # 1. sample component indices
-        z = torch.multinomial(pi, n, replacement=True)  # (N,)
-
-        # # 2. sample standard normals
-        # eps = torch.randn(n, d)
-
-        # 3. gather parameters for each sample
+        # gather parameters for each sample
         mu_z = self.mu[z]        # (N, d)
-        sigma_z = self.sigma[z]  # (N, d, d)
+        sigma_z = self.sigma[z] ** 2  # (N, d)
+        cov_z = torch.diag_embed(sigma_z) # (N, d, d)
+        return MultivariateNormal(mu_z, cov_z).sample()
 
-        # # 4. reparameterization
-        # x = mu_z + sigma_z * eps
 
-        return MultivariateNormal(mu_z, sigma_z).sample()
-    
-
-    # --------------------------------------------------
-    # Truth generation
-    # --------------------------------------------------
-    def sample_truth(
-        self,
-        n:int,
-        d:int
-    ):
-        if self.distr == "Normal":
-            return self.sample_gaussian(n, d)
+    def sample_truth(self, n:int, d:int) -> torch.tensor:
+        if self.distr == "normal":
+            return self._multivariate_gaussian(n, d)
         
         if self.distr == 'gaussian_mixture':
-            return self.sample_gaussian_mixture(n)
+            return self._gaussian_mixture(n)
 
-        U = self.sample_gaussian_copula(n, d)
+        U = self._copula_gaussian(n, d)
+        X = self.u_to_x(U)
 
-        return self.inverse_cdf(U)
+        return X
 
-    # --------------------------------------------------
-    # Latent uniforms
-    # --------------------------------------------------
-    def latent_uniforms(
-        self, 
-        X: torch.tensor
-    ):
-        """
-        X -> marginal cdfs. Used for 3D case to induce missingness.
-        """
-        X12 = X[:,:2]
-        if self.distr == "UNI":
-            return X12[:,0], X12[:,1]
 
-        if self.distr == "Logistic":
-            return (
-                torch.sigmoid(X12[:,0]),
-                torch.sigmoid(X12[:,1])
-            )
 
-        if self.distr == "Normal":
-            normal = Normal(0,1)
-            return (
-                normal.cdf(X12[:,0]),
-                normal.cdf(X12[:,1])
-            )
+class MissingDataGenerator(DataGenerator, AmputeMAR, MotivatingExample):
 
-        if self.distr == "Student t":
-            tdist = StudentT(self.df)
-            return (
-                tdist.cdf(X12[:,0]),
-                tdist.cdf(X12[:,1])
-            )
-        
-        if self.distr == 'gaussian_mixture':
-            
-            normal1 = Normal(self.mu[:, 0].unsqueeze(1), self.sigma[:, 0].unsqueeze(1))
-            normal2 = Normal(self.mu[:, 1].unsqueeze(1), self.sigma[:, 1].unsqueeze(1))
+    def __init__(self, 
+                 n:int, d:int,
+                 distr = "normal", mu = None, sigma = None, pi = None, alpha = 0.7, c = 0.01, df = None, device = "cpu", dtype=torch.float64):
+        DataGenerator.__init__(self, distr=distr, mu=mu, sigma=sigma, pi=pi, alpha=alpha, c=c, df=df, device=device, dtype=dtype)
+        AmputeMAR.__init__(self)
+        MotivatingExample.__init__(self)
 
-            return (
-                self.pi @ normal1.cdf(X12[:,0].repeat(len(self.mu), 1)),
-                self.pi @ normal2.cdf(X12[:,1].repeat(len(self.mu), 1))
-            )
+        self.X = self.sample_truth(n, d)
+        self.n = n
+        self.d = d
 
-        raise NotImplementedError
 
-    # --------------------------------------------------
-    # 3D examples
-    # --------------------------------------------------
-    # MAR
-    def generate_MAR(
-        self,
-        X: torch.tensor
-    ):
-        """
-        Generate MAR:
-        P((0,0,0)|x) = 1 - P((0,1,0)|x) - P((1,0,0)|x)
-        P((0,1,0)|x) = (2 - max(P(x1), c))/3
-        P((1,0,0)|x) = (1 - max(P(x2), c))/3
+    def get_M_ampute(self, n_pat, prop=None, seed=123):
+        rng = np.random.default_rng(seed)
+        patterns = AmputeMAR.sample_patterns(self.d, self.n, npattern=n_pat, rng=rng)
+        Xmis, M = AmputeMAR().ampute(self.X, patterns=patterns, prop=prop)
+        return Xmis, M
 
-        Returns:
-            M: MAR missingness mask with shape X.shape
-        """
-        U1, U2 = self.latent_uniforms(X) # X -> marginal cdfs
 
-        G1 = torch.maximum(U1, self.c)
-        G2 = torch.maximum(U2, self.c)
-
-        probs = torch.stack(
-            [
-                (G1+G2)/3,
-                (2-G1)/3, # X2 missing
-                (1-G2)/3 # X1 missing
-            ],
-            dim=1
-        )
-
-        choice = Categorical(probs).sample()
-
-        _,d = X.shape
-
-        masks = torch.stack(
-            [
-                torch.ones(
-                    d,
-                    device=self.device
-                ), #(1,1,1)
-
-                torch.arange(
-                    d,
-                    device=self.device
-                ) != 1, #(1,0,1)
-
-                torch.arange(
-                    d,
-                    device=self.device
-                ) != 0, #(0,1,1)
-            ]
-        )
-
-        return masks[choice]
-
-    # MNAR
-    def generate_MNAR1(
-            self,
-            X: torch.tensor,
-            eps: float
-        ):
-        """
-        Generate MNAR:
-            P((0,0,0)|x) = 1 - P((0,1,0)|x) - P((1,0,0)|x)
-            P((0,1,0)|x) = (2 - max(P(x2), c))/3
-            P((1,0,0)|x) = (1 - max(P(x1), c))/3
-
-        Returns:
-            M: MNAR missingness mask with shape X.shape
-        """
-        U1,U2 = self.latent_uniforms(X)
-        
-        G1 = torch.maximum(U1, self.c)
-        G2 = torch.maximum(U2, self.c)
-
-        P_MAR = torch.stack(
-            [
-                (G1+G2)/3,
-                (2-G1)/3, # X2 missing
-                (1-G2)/3 # X1 missing
-            ],
-            dim=1
-        )
-        
-        P_MNAR = torch.stack(
-            [
-                (G1+G2)/3,
-                (2-G2)/3, # X2 missing
-                (1-G1)/3 # X1 missing
-            ],
-            dim=1
-        )
-
-        n,d = X.shape
-        
-        use_mar = torch.bernoulli(
-            torch.full((n,), 1 - eps, device=X.device)
-            ).bool()
-
-        P = torch.where(use_mar.unsqueeze(1), P_MAR, P_MNAR)
-        
-        choice = Categorical(P).sample()
-        
-        masks = torch.stack(
-            [
-                torch.ones(
-                    d,
-                    device=self.device
-                ), #(1,1,1)
-
-                torch.arange(
-                    d,
-                    device=self.device
-                ) != 1, #(1,0,1)
-
-                torch.arange(
-                    d,
-                    device=self.device
-                ) != 0, #(0,1,1)
-            ]
-        )
-
-        return masks[choice]
+    def get_M_first2cols(self, eps):
+        return MotivatingExample.get_M(self.X, eps=eps)

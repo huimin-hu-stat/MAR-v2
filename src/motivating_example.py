@@ -1,12 +1,71 @@
 from .gaussian_mixture import GaussianMixtureMAR
+from .xu_transform import XUTransform
 from .metrics import energy_distance, energy_distance_faster
 import torch
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from torch.distributions import MultivariateNormal, Normal, Categorical
+from torch.distributions import MultivariateNormal, Categorical
 
-class MotivatingExample:
+
+class UtoM:
+
+    def __init__(self, d:int):
+        self.d = d
+
+    def _pattern_prop_mar(self, u1, u2):
+        """
+        P(M=m|icdf(X)=u)
+        """
+        return torch.stack([u1+u2, 2-u1, 1-u2], dim=1) / 3
+
+    def _pattern_prop_mnar(self, u1, u2):
+        return torch.stack([u1+u2, 2-u2, 1-u1], dim=1) / 3
+
+    
+    def _pattern_prop_mar_like(self, u1, u2):
+        """
+        p((1,1,1)|x)=0.5, p((1,0,1)|x)=0.25 - 0.5 * (1-u1) * (1-u2), p((0,1,1)|x)=0.25 + 0.5 * (1-u1) * (1-u2)
+        """
+        p1 = torch.ones_like(u1, device=self.device, dtype=self.dtype) * 0.5
+        prod = (u1 - 0.5) * (u2 - 0.5) * 0.5
+        probs = torch.stack((p1, 0.25-prod, 0.25+prod), dim=1)
+        return probs
+
+
+    def _pattern_prop_eps_contaminated(self, u1, u2, eps):
+        p1 = self._pattern_prop_mar(u1, u2)
+        p2 = self._pattern_prop_mnar(u1, u2)
+        mar = torch.bernoulli(
+            torch.full((self.n,), 1 - eps, device=self.device)
+        ).bool()
+        return torch.where(mar.unsqueeze(1), p1, p2)
+
+    def _pattern_prop(self, missing_type, u1, u2, eps):
+        if missing_type == 'mar':
+            return self._pattern_prop_mar(u1, u2)
+        if missing_type == 'mnar':
+            return self._pattern_prop_mnar(u1, u2)
+        if missing_type == 'contaminated_mar':
+            return self._pattern_prop_eps_contaminated(u1, u2, eps)
+        if missing_type == 'mar_like':
+            return self._pattern_prop_mar_like(u1, u2)
+
+    def get_M(self, missing_type, u1, u2, eps=None):
+        probs = self._pattern_prop(missing_type, u1, u2, eps)
+        idx = Categorical(probs).sample()
+        masks = torch.stack(
+            [
+                torch.ones(self.d, device=self.device),
+                torch.arange(self.d, device=self.device) != 1,
+                torch.arange(self.d, device=self.device) != 0,
+            ]
+        )
+        return masks[idx]
+
+
+
+class MotivatingExample(XUTransform):
 
     def __init__(self, type='mar', n=5000, d=2, alpha=0.7, model_k=(0,10), p=0.1, B=100, n_jobs=15, device='cpu', dtype=torch.float32):
         self.type = type
@@ -25,6 +84,7 @@ class MotivatingExample:
             'mar_like': self._get_X_mar,
             'mnar': self._get_X_mnar
         }
+        super().__init__()
         self.get_X = get_X_funcs[type]
 
         evaluate_funcs = {
@@ -46,14 +106,6 @@ class MotivatingExample:
         cov = torch.eye(self.d, device=self.device, dtype=self.dtype)
         return MultivariateNormal(loc, cov).sample((self.n,))
 
-    def _X_to_U(self, X):
-        norm = Normal(0,1)
-        x1 = X[:, 0]
-        x2 = X[:, 1]
-        u1 = norm.cdf(x1)
-        u2 = norm.cdf(x2)
-        return u1, u2
-
     def get_M(self, X, eps=None):
         get_M_probs = {
             'mar': self._get_mar_p,
@@ -72,12 +124,14 @@ class MotivatingExample:
         return masks[idx]
 
     def _get_mar_p(self, X, eps=None):
-        u1, u2 = self._X_to_U(X)
+        u1 = self.x_to_u(X[:,0])
+        u2 = self.x_to_u(X[:,1])
         return torch.stack([u1+u2, 2-u1, 1-u2], dim=1) / 3
         
 
     def _get_mnar_p(self, X, eps=None):
-        u1, u2 = self._X_to_U(X)
+        u1 = self.x_to_u(X[:,0])
+        u2 = self.x_to_u(X[:,1])
         return torch.stack([u1+u2, 2-u2, 1-u1], dim=1) / 3
 
     def _get_eps_mnar_p(self, X, eps=0.0):
@@ -92,7 +146,8 @@ class MotivatingExample:
         """
         p((1,1,1)|x)=0.5, p((1,0,1)|x)=0.25 - 0.5 * (1-u1) * (1-u2), p((0,1,1)|x)=0.25 + 0.5 * (1-u1) * (1-u2)
         """
-        u1, u2 = self._X_to_U(X)
+        u1 = self.x_to_u(X[:,0])
+        u2 = self.x_to_u(X[:,1])
         p1 = torch.ones_like(u1, device=self.device, dtype=self.dtype) * 0.5
         prod = (u1 - 0.5) * (u2 - 0.5) * 0.5
         probs = torch.stack((p1, 0.25-prod, 0.25+prod), dim=1)
