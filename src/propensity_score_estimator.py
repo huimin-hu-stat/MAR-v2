@@ -1,37 +1,13 @@
 from .motivating_example import MotivatingExample
 from .converter import Converter
 from .gaussian_mixture import GaussianMixtureMAR
+from .r_funcs import nmm, predict_prop_nmmipw
+
 import torch
 import numpy as np
+import nlopt
 from scipy.stats import norm
 
-#=== FOR NMMIPW ===#
-import rpy2.robjects as ro
-from rpy2.robjects import pandas2ri, numpy2ri
-from rpy2.robjects.conversion import localconverter
-from rpy2.robjects.packages import importr
-nmm = importr("NMMIPW")
-#==================#
-
-# R function used to obtain propensity score with NMMIPW:::prop_compute
-ro.r('''
-predict_prop <- function(ps, newdata, pattern) {
-  X <- as.matrix(newdata); M <- nrow(pattern)
-  work_df <- c(); selection <- c(0)
-  for (m in 2:M) {
-    work_df <- cbind(work_df, cbind(1, X[, pattern[m, ] == 1]))
-    selection <- c(selection, sum(pattern[m, ]) + 1)
-  }
-  selection <- cumsum(selection)
-  NMMIPW:::prop_compute(para = ps$gamma_para, work_df = work_df,
-                        R = rep(1, nrow(X)), selection = selection,
-                        sigma_star = ps$sigma_star, pattern = pattern)
-}
-''')
-predict_prop_nmmipw = ro.r["predict_prop"]
-
-
-import nlopt
 
 def nmm_ipw_fast(X, O):
     """
@@ -223,8 +199,9 @@ class PropensityScoreEstimator(Converter):
                     raise ValueError(
                         f"Invalid input dimension: Xtest must be the same dimension of Xtrain, got shape {Xtest.shape}."
                     )
-        # Python implementation of NMMIPW
+        # Python implementation of NMMIPW, only for computing on the train!
         if fast:
+            print('Fast method only supports Xtrain')
             return nmm_ipw_fast(X=self.X, O=self.M)
 
         # NMMIPW:prop_compute()

@@ -5,22 +5,6 @@ from rpy2.robjects.packages import importr
 
 from .converter import Converter
 
-
-# import os
-# from pathlib import Path
-# R_HOME = Path(r"C:\Users\hu\AppData\Local\Programs\R\R-4.5.3")
-# assert (R_HOME / "bin" / "R.exe").exists(), "R.exe not found"
-# assert (R_HOME / "bin" / "x64" / "R.dll").exists(), "R.dll not found"
-# os.environ["R_HOME"] = str(R_HOME)
-# os.environ["PATH"] = (
-#     str(R_HOME / "bin" / "x64")
-#     + os.pathsep
-#     + str(R_HOME / "bin")
-#     + os.pathsep
-#     + os.environ["PATH"]
-# )
-
-
 mice = importr("mice")
 
 class AmputeMAR(Converter):

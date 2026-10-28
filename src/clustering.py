@@ -160,35 +160,3 @@ def entropy_combi(tau, n_clusters, labels=None):
         hard_labels = comp_to_cluster[np.asarray(labels, dtype=int)]
 
     return CombiResult(current, hard_labels, merge_matrix, groups, merges, entropies)
-
-
-
-
-# import rpy2.robjects as ro
-# from rpy2.robjects.packages import importr
-
-# from rpy2.robjects import ListVector, StrVector
-
-
-# def _to_r_matrix(X):
-#     return ro.r.matrix(
-#         ro.IntVector(X.T.flatten().tolist()),
-#         nrow=X.shape[0],
-#         ncol=X.shape[1],
-#     )
-
-
-# mcl = ListVector(
-#     {
-#         'z': _to_r_matrix(resp),
-#         'G': resp.shape[1]
-#     }
-# )
-
-# mcl.rclass = StrVector(["Mclust"])
-
-# mcluster = importr("mclust")
-
-# results = mcluster.clustCombi(mcl)
-
-# labels = np.array(results.rx2('classification')[2]) == 1
