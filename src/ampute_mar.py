@@ -81,7 +81,7 @@ class AmputeMAR:
                 seed=self.seed_amp
             )
             # amp = amp.to_numpy() if hasattr(amp, "to_numpy") else np.asarray(amp)
-            X_NA = torch.tensor(self.to_python(self.to_python(result)['amp'].to_numpy()), device=X.device, dtype=X.dtype)   # (n, d)
+            X_NA = torch.tensor(self.to_python(result)['amp'].to_numpy(), device=X.device, dtype=X.dtype)   # (n, d)
 
         M = ~torch.isnan(X_NA)
 
