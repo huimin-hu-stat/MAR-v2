@@ -151,7 +151,7 @@ class Converter:
             return None
 
         # Handle R lists explicitly before generic conversion.
-        if isinstance(x, ro.vectors.ListVector):
+        if isinstance(x, ro.vectors.ListVector) and not isinstance(x, ro.vectors.DataFrame):
             names = x.names
 
             # No names: return a Python list.
