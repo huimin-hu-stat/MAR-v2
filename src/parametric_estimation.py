@@ -2,6 +2,7 @@ from .gaussian_mixture import GaussianMixtureMAR
 from .propensity_score_estimator import PropensityScoreEstimator
 import torch
 import numpy as np
+from sklearn.linear_model import LinearRegression
 
 class ParametricEstimation(PropensityScoreEstimator):
 
@@ -63,31 +64,41 @@ class ParametricEstimation(PropensityScoreEstimator):
         Xtilde = self.model.sample(self.n_sim)[0]
         return func(Xtilde).item()
 
-    def linear_regression(self, Ycol, method, propensity_score=None):        
+    def linear_regression(self, Ycol, method, eps=1e-3, propensity_score=None):
         if method in ["generation", "imputation", "complete", "complete-case"]:
             if method == "generation":
-                XYtilde = self.model.sample(self.n)[0]
+                XYtilde = self.model.sample(self.n_sim)[0]
             elif method == "imputation":
-                XYtilde = self.model.impute(self.Xc, self.M)
+                XYtilde = self.model.impute(self.X, self.M)
             elif method == "complete":
                 XYtilde = self.X
             elif method == "complete-case":
                 XYtilde = self.Xc
             
-            Xtilde = XYtilde[:, np.arange(XYtilde.shape[1]) != self.Ycol % XYtilde.shape[1]]
-            Ytilde = XYtilde[:, self.Ycol]
+            Xtilde = XYtilde[:, np.arange(XYtilde.shape[1]) != Ycol % XYtilde.shape[1]]
+            Ytilde = XYtilde[:, Ycol]
             
             lin_reg = LinearRegression().fit(Xtilde, Ytilde)
             return lin_reg
-            
-        elif method == "ipw":
-            if propensity_score == None:
-                # use gmm_ipw by default
-                propensity_score = self._propensity_score_Xc("gmm")
+
+        elif method in ["gmm_ipw", "nmmipw", "nmmipw_R", "ipw"]:
+            if method == "ipw":
+                if propensity_score == None:
+                    raise ValueError("propensity_score must be given if method is 'ipw'")
+            else:
+                if propensity_score != None:
+                    raise ValueError("propensity_score can only be given if method is 'ipw'")
+                
+                if method == "gmm_ipw":
+                    propensity_score = self._propensity_score_Xc("gmm", eps=eps)
+                elif method == "nmmipw":
+                    propensity_score = self._propensity_score_Xc("nmm", eps=eps, fast=True)
+                elif method == "nmmipw_R":
+                    propensity_score = self._propensity_score_Xc("nmm", eps=eps, fast=False)
 
             # extract fully observed rows and fit weighted regression
-            Xm0 = self.Xc[:, np.arange(self.Xc[1]) != self.Ycol % self.Xc.shape[1]]
-            Ym0 = self.Xc[:, self.Ycol]
+            Xm0 = self.Xc[:, np.arange(self.Xc.shape[1]) != Ycol % self.Xc.shape[1]]
+            Ym0 = self.Xc[:, Ycol]
             lin_reg = LinearRegression().fit(Xm0, Ym0, sample_weight=1/propensity_score)
             return lin_reg
             
